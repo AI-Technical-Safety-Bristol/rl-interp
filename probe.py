@@ -50,7 +50,7 @@ def show_act(inp, probe, out, fig, ax):
     ax[0].set_xlabel("neuron")
     ax[0].set_yticks([])
 
-    ax[1].imshow(probe.flip(0).detach().numpy(), cmap="gray")
+    ax[1].imshow(probe.detach().numpy(), cmap="gray")
     ax[1].set_xlabel("neuron")
     ax[1].set_ylabel("layer")
     ax[1].set_yticks([])
