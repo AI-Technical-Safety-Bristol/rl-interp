@@ -6,7 +6,7 @@ env = gym.make("LunarLander-v2", render_mode="human")
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-policy = MultiLayerFeedForward(2, 8, 4, 4).to(device)
+policy = MultiLayerFeedForward(2, 8, 8, 4).to(device)
 policy.load_state_dict(torch.load("policy_100K.pt", map_location=device))
 
 obs, info = env.reset()

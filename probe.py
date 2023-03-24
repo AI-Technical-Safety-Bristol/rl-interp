@@ -84,7 +84,7 @@ def show_weights(net, fig, ax):
     ax[-1].set_ylabel("from")
     ax[-1].set_title("output proj")
 
-model = MultiLayerFeedForward(2, 8, 4, 4)
+model = MultiLayerFeedForward(2, 8, 8, 4)
 model.load_state_dict(torch.load("policy_100K.pt"))
 model = ProbedFeedForward.from_mlff(model)
 
