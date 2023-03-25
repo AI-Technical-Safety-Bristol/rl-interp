@@ -5,39 +5,9 @@ from goofy import MultiLayerFeedForward
 
 from matplotlib.widgets import Slider
 import matplotlib.pyplot as plt
+import matplotlib.lines as lines
 from matplotlib.gridspec import GridSpec
-
-class ProbedFeedForward(nn.Module):
-    def __init__(self, n_layers, n_inputs, d_model, n_outputs):
-        super().__init__()
-        self.in_layer = nn.Linear(n_inputs, d_model)
-        self.layers = nn.ModuleList([nn.Linear(d_model, d_model) for _ in range(n_layers)])
-        self.out_layer = nn.Linear(d_model, n_outputs)
-        
-        self.register_buffer("probe", torch.zeros(n_layers+1, d_model))
-
-    def forward(self, x):
-        x = F.gelu(self.in_layer(x))
-        self.probe[0,:] = x
-        for i, l in enumerate(self.layers):
-            x = F.gelu(l(x))
-            self.probe[i+1,:] = x
-        x = self.out_layer(x)
-        return x
-
-    def from_mlff(net):
-        """
-        Create a ProbedFeedForward from a MultiLayerFeedForward
-        """
-        pff = ProbedFeedForward(len(net.layers), net.in_layer.in_features, net.layers[0].out_features, net.out_layer.out_features)
-        pff.in_layer.weight = net.in_layer.weight
-        pff.in_layer.bias = net.in_layer.bias
-        for i, l in enumerate(net.layers):
-            pff.layers[i].weight = l.weight
-            pff.layers[i].bias = l.bias
-        pff.out_layer.weight = net.out_layer.weight
-        pff.out_layer.bias = net.out_layer.bias
-        return pff
+from probed import ProbedFeedForward
 
 def show_act(inp, probe, out, fig, ax):
     """
@@ -62,7 +32,7 @@ def show_act(inp, probe, out, fig, ax):
 def show_weights(net, fig, ax):
     """
     Show the weights of the network net
-    The weights shoud be presented as a 2D black and white image per layer
+    The weights should be presented as a 2D black and white image per layer
     All images should be shown on the same figure
     Each image should have axis titles indicating to and from neurons
     """
@@ -84,9 +54,35 @@ def show_weights(net, fig, ax):
     ax[-1].set_ylabel("from")
     ax[-1].set_title("output proj")
 
+def show_biases(net, fig, ax):
+    """
+    Show the biases of the network net
+    The biases should be presented as a 2D black and white image per layer
+    All images should be shown on the same figure
+    Each image should have axis titles indicating to and from neurons
+    """
+    fig.suptitle("weights")
+
+    ax[0].imshow(net.in_layer.bias.unsqueeze(0).transpose(0,1).detach().numpy(), cmap="gray")
+    ax[0].set_xlabel("from")
+    ax[0].set_ylabel("to")
+    ax[0].set_title("input proj")
+
+    for i, l in enumerate(net.layers):
+        ax[i+1].imshow(l.bias.unsqueeze(0).transpose(0,1).detach().numpy(), cmap="gray")
+        ax[i+1].set_xlabel("from")
+        ax[i+1].set_ylabel("to")
+        ax[i+1].set_title(f"layer {i} proj")
+
+    ax[-1].imshow(net.out_layer.bias.unsqueeze(0).transpose(0,1).detach().numpy(), cmap="gray")
+    ax[-1].set_xlabel("to")
+    ax[-1].set_ylabel("from")
+    ax[-1].set_title("output proj")
+
 model = MultiLayerFeedForward(2, 8, 4, 4)
 model.load_state_dict(torch.load("policy_100K.pt"))
 model = ProbedFeedForward.from_mlff(model)
+#model = model.gen_sparse_model_proportion(0.1, 0.1)
 
 inp = torch.zeros(8)
 out = model(inp)
@@ -94,6 +90,10 @@ out = model(inp)
 weight_fig, weight_ax = plt.subplots(1, len(model.layers)+2)
 
 show_weights(model, weight_fig, weight_ax)
+
+bias_fig, bias_ax = plt.subplots(1, len(model.layers)+2)
+
+show_biases(model, bias_fig, bias_ax)
 
 act_fig = plt.figure()
 gs = GridSpec(6, 2)
@@ -132,5 +132,68 @@ x_vel.on_changed(lambda val: update(val, act_fig, act_ax))
 y_vel.on_changed(lambda val: update(val, act_fig, act_ax))
 angle.on_changed(lambda val: update(val, act_fig, act_ax))
 angle_vel.on_changed(lambda val: update(val, act_fig, act_ax))
+
+all_lines = []
+def draw_line(fig, c0, c1, weight):
+    global all_lines
+    # draw a line from x to y with color dependent on weights
+    # append line to lines
+    line = lines.Line2D([c0[0],c1[0]], [c0[1],c1[1]], lw=2, color=plt.cm.RdBu(weight))
+    fig.add_artist(line)
+    all_lines.append(line)
+
+def ax_to_fig_coord(fig, ax, coord):
+    # convert matplotlib ax coords to fig coords
+    return fig.transFigure.inverted().transform(ax.transData.transform(coord))
+
+def fig_to_ax_coord(fig, ax, coord):
+    return ax.transData.inverted().transform(fig.transFigure.transform(coord))
+
+# on mouseover, draw lines from hovered neuron to all other connected neurons
+def on_hover(event):
+    global all_lines
+    # clear all lines
+    for line in all_lines:
+        line.remove()
+    all_lines = []
+    if event.inaxes == act_ax[1]:
+        # get neuron coordinates
+        x, y = event.xdata, event.ydata
+        x, y = round(x), round(y)
+        # get weights and coords of all neurons feeding into neuron x,y
+        feed_from = []
+        if y == 0:
+            # input layer
+            feed_from = [(ax_to_fig_coord(act_fig, act_ax[0], (z,0)), w) for z, w in enumerate(model.in_layer.weight[x,:])]
+        else:
+            # hidden layer
+            feed_from = [(ax_to_fig_coord(act_fig, act_ax[1], (z,y-1)), w) for z, w in enumerate(model.layers[y-1].weight[x,:])]
+        # get weights and coords of all neurons that neuron x,y feeds into
+        feed_into = []
+        if y == len(model.layers):
+            # output layer
+            feed_into = [(ax_to_fig_coord(act_fig, act_ax[2], (z,0)), w) for z, w in enumerate(model.out_layer.weight[x,:])]
+        else:
+            # hidden layer
+            feed_into = [(ax_to_fig_coord(act_fig, act_ax[1], (z,y+1)), w) for z, w in enumerate(model.layers[y].weight[:,x])]
+        
+        # draw lines
+        for c0, w in feed_from:
+            draw_line(act_fig, c0, ax_to_fig_coord(act_fig, act_ax[1], (x, y)), w.item())
+        for c1, w in feed_into:
+            draw_line(act_fig, ax_to_fig_coord(act_fig, act_ax[1], (x, y)), c1, w.item())
+        act_fig.canvas.draw_idle()
+
+act_fig.canvas.mpl_connect("motion_notify_event", on_hover)
+
+# delete lines on mouseout
+def on_leave(event):
+    if event.inaxes == act_ax[1]:
+        for line in lines:
+            line.remove()
+        act_fig.canvas.draw_idle()
+    lines = []
+
+act_fig.canvas.mpl_connect("axes_leave_event", on_leave)
 
 plt.show()
