@@ -20,7 +20,7 @@ def show_act(inp, probe, out, fig, ax):
     ax[0].set_xlabel("neuron")
     ax[0].set_yticks([])
 
-    ax[1].imshow(probe.flip(0).detach().numpy(), cmap="gray")
+    ax[1].imshow(probe.detach().numpy(), cmap="gray")
     ax[1].set_xlabel("neuron")
     ax[1].set_ylabel("layer")
     ax[1].set_yticks([])
@@ -54,32 +54,7 @@ def show_weights(net, fig, ax):
     ax[-1].set_ylabel("from")
     ax[-1].set_title("output proj")
 
-def show_biases(net, fig, ax):
-    """
-    Show the biases of the network net
-    The biases should be presented as a 2D black and white image per layer
-    All images should be shown on the same figure
-    Each image should have axis titles indicating to and from neurons
-    """
-    fig.suptitle("weights")
-
-    ax[0].imshow(net.in_layer.bias.unsqueeze(0).transpose(0,1).detach().numpy(), cmap="gray")
-    ax[0].set_xlabel("from")
-    ax[0].set_ylabel("to")
-    ax[0].set_title("input proj")
-
-    for i, l in enumerate(net.layers):
-        ax[i+1].imshow(l.bias.unsqueeze(0).transpose(0,1).detach().numpy(), cmap="gray")
-        ax[i+1].set_xlabel("from")
-        ax[i+1].set_ylabel("to")
-        ax[i+1].set_title(f"layer {i} proj")
-
-    ax[-1].imshow(net.out_layer.bias.unsqueeze(0).transpose(0,1).detach().numpy(), cmap="gray")
-    ax[-1].set_xlabel("to")
-    ax[-1].set_ylabel("from")
-    ax[-1].set_title("output proj")
-
-model = MultiLayerFeedForward(2, 8, 4, 4)
+model = MultiLayerFeedForward(2, 8, 8, 4)
 model.load_state_dict(torch.load("policy_100K.pt"))
 model = ProbedFeedForward.from_mlff(model)
 #model = model.gen_sparse_model_proportion(0.1, 0.1)
