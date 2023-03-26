@@ -9,6 +9,16 @@ import matplotlib.pyplot as plt
 import matplotlib.lines as lines
 from matplotlib.gridspec import GridSpec
 from probed import ProbedFeedForward
+import argparse
+
+# parse optional arguments input model, model dimensions (num hidden layers, input dim, hidden dim, output dim), and sparsity levels for weights and biases
+parser = argparse.ArgumentParser(description='Probe a model')
+parser.add_argument('--model', type=str, default='policy.pt', help='path to model')
+parser.add_argument('--test', type=bool, default=False, help='test with random model')
+parser.add_argument('--dims', type=int, nargs='+', default=[2, 8, 8, 4], help='dimensions of model')
+parser.add_argument('--w_sparsity', type=float, default=1, help='sparsity of weights')
+parser.add_argument('--b_sparsity', type=float, default=1, help='sparsity of biases')
+args = parser.parse_args()
 
 def show_act(inp, probe, out, fig, ax):
     """
@@ -80,12 +90,18 @@ def show_biases(net, fig, ax):
     ax[-1].set_ylabel("from")
     ax[-1].set_title("output proj")
 
-model = MultiLayerFeedForward(2, 8, 8, 4)
-model.load_state_dict(torch.load("policy_100K.pt"))
-model = ProbedFeedForward.from_mlff(model)
-model = model.gen_sparse_model_proportion(0.2, 0.2)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-inp = torch.zeros(8)
+if not args.test:
+    model = MultiLayerFeedForward(*args.dims)
+    model.load_state_dict(torch.load(args.model))
+    model = ProbedFeedForward.from_mlff(model).to(device)
+    model = model.gen_sparse_model_proportion(args.w_sparsity, args.b_sparsity)
+else:
+    model = ProbedFeedForward(*args.dims).to(device)
+    model = model.gen_sparse_model_proportion(args.w_sparsity, args.b_sparsity)
+
+inp = torch.zeros(args.dims[1])
 out = model(inp)
 
 weight_fig, weight_ax = plt.subplots(1, len(model.layers)+2)
