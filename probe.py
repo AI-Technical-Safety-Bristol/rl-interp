@@ -2,6 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from goofy import MultiLayerFeedForward
+import math
 
 from matplotlib.widgets import Slider
 import matplotlib.pyplot as plt
@@ -20,7 +21,7 @@ def show_act(inp, probe, out, fig, ax):
     ax[0].set_xlabel("neuron")
     ax[0].set_yticks([])
 
-    ax[1].imshow(probe.detach().numpy(), cmap="gray")
+    ax[1].imshow(probe.flip(0).detach().numpy(), cmap="gray")
     ax[1].set_xlabel("neuron")
     ax[1].set_ylabel("layer")
     ax[1].set_yticks([])
@@ -54,10 +55,35 @@ def show_weights(net, fig, ax):
     ax[-1].set_ylabel("from")
     ax[-1].set_title("output proj")
 
+def show_biases(net, fig, ax):
+    """
+    Show the biases of the network net
+    The biases should be presented as a 2D black and white image per layer
+    All images should be shown on the same figure
+    Each image should have axis titles indicating to and from neurons
+    """
+    fig.suptitle("weights")
+
+    ax[0].imshow(net.in_layer.bias.unsqueeze(0).transpose(0,1).detach().numpy(), cmap="gray")
+    ax[0].set_xlabel("from")
+    ax[0].set_ylabel("to")
+    ax[0].set_title("input proj")
+
+    for i, l in enumerate(net.layers):
+        ax[i+1].imshow(l.bias.unsqueeze(0).transpose(0,1).detach().numpy(), cmap="gray")
+        ax[i+1].set_xlabel("from")
+        ax[i+1].set_ylabel("to")
+        ax[i+1].set_title(f"layer {i} proj")
+
+    ax[-1].imshow(net.out_layer.bias.unsqueeze(0).transpose(0,1).detach().numpy(), cmap="gray")
+    ax[-1].set_xlabel("to")
+    ax[-1].set_ylabel("from")
+    ax[-1].set_title("output proj")
+
 model = MultiLayerFeedForward(2, 8, 8, 4)
 model.load_state_dict(torch.load("policy_100K.pt"))
 model = ProbedFeedForward.from_mlff(model)
-#model = model.gen_sparse_model_proportion(0.1, 0.1)
+model = model.gen_sparse_model_proportion(0.2, 0.2)
 
 inp = torch.zeros(8)
 out = model(inp)
@@ -109,11 +135,11 @@ angle.on_changed(lambda val: update(val, act_fig, act_ax))
 angle_vel.on_changed(lambda val: update(val, act_fig, act_ax))
 
 all_lines = []
-def draw_line(fig, c0, c1, weight):
+def draw_line(fig, c0, c1, col):
     global all_lines
     # draw a line from x to y with color dependent on weights
     # append line to lines
-    line = lines.Line2D([c0[0],c1[0]], [c0[1],c1[1]], lw=2, color=plt.cm.RdBu(weight))
+    line = lines.Line2D([c0[0],c1[0]], [c0[1],c1[1]], lw=2, color=col)
     fig.add_artist(line)
     all_lines.append(line)
 
@@ -126,6 +152,9 @@ def fig_to_ax_coord(fig, ax, coord):
 
 # on mouseover, draw lines from hovered neuron to all other connected neurons
 def on_hover(event):
+    # nn.Linear(a,b) represented as a matrix of size (b,a)
+    # weight from x->y given by l.weight[y,x]
+
     global all_lines
     # clear all lines
     for line in all_lines:
@@ -136,38 +165,86 @@ def on_hover(event):
         x, y = event.xdata, event.ydata
         x, y = round(x), round(y)
         # get weights and coords of all neurons feeding into neuron x,y
-        feed_from = []
+        source = []
         if y == 0:
             # input layer
-            feed_from = [(ax_to_fig_coord(act_fig, act_ax[0], (z,0)), w) for z, w in enumerate(model.in_layer.weight[x,:])]
+            source = [(ax_to_fig_coord(act_fig, act_ax[0], (z,0)), w) for z, w in enumerate(model.in_layer.weight[x,:])]
         else:
             # hidden layer
-            feed_from = [(ax_to_fig_coord(act_fig, act_ax[1], (z,y-1)), w) for z, w in enumerate(model.layers[y-1].weight[x,:])]
+            source = [(ax_to_fig_coord(act_fig, act_ax[1], (z,y-1)), w) for z, w in enumerate(model.layers[y-1].weight[x,:])]
         # get weights and coords of all neurons that neuron x,y feeds into
-        feed_into = []
+        sink = []
         if y == len(model.layers):
             # output layer
-            feed_into = [(ax_to_fig_coord(act_fig, act_ax[2], (z,0)), w) for z, w in enumerate(model.out_layer.weight[x,:])]
+            sink = [(ax_to_fig_coord(act_fig, act_ax[2], (z,0)), w) for z, w in enumerate(model.out_layer.weight[:,x])]
         else:
             # hidden layer
-            feed_into = [(ax_to_fig_coord(act_fig, act_ax[1], (z,y+1)), w) for z, w in enumerate(model.layers[y].weight[:,x])]
+            sink = [(ax_to_fig_coord(act_fig, act_ax[1], (z,y+1)), w) for z, w in enumerate(model.layers[y].weight[:,x])]
         
         # draw lines
-        for c0, w in feed_from:
-            draw_line(act_fig, c0, ax_to_fig_coord(act_fig, act_ax[1], (x, y)), w.item())
-        for c1, w in feed_into:
-            draw_line(act_fig, ax_to_fig_coord(act_fig, act_ax[1], (x, y)), c1, w.item())
+        all_w = [w.item() for _, w in source] + [w.item() for _, w in sink]
+        max_w = abs(max(all_w)) + 0.01
+        min_w = abs(min(all_w)) + 0.01
+
+        for c0, w in source:
+            w = w.item()
+            w_ = w / min_w if w < 0 else w / max_w
+            r,g,b,_ = plt.cm.RdBu(w_)
+            a = 1 - math.exp(-w**2)
+            draw_line(act_fig, c0, ax_to_fig_coord(act_fig, act_ax[1], (x, y)), (r,g,b,a))
+        for c1, w in sink:
+            w = w.item()
+            w_ = w / min_w if w < 0 else w / max_w
+            r,g,b,_ = plt.cm.RdBu(w_)
+            a = 1 - math.exp(-w**2)
+            draw_line(act_fig, ax_to_fig_coord(act_fig, act_ax[1], (x, y)), c1, (r,g,b,a))
+        act_fig.canvas.draw_idle()
+    elif event.inaxes == act_ax[0]:
+        # get neuron coordinates
+        x = event.xdata
+        x = round(x)
+        # only feed from
+        sink = [(ax_to_fig_coord(act_fig, act_ax[1], (z,0)), w) for z, w in enumerate(model.in_layer.weight[:,x])]
+        # draw lines
+        all_w = [w.item() for _, w in sink]
+        max_w = abs(max(all_w)) + 0.01
+        min_w = abs(min(all_w)) + 0.01
+
+        for c0, w in sink:
+            w = w.item()
+            w_ = w / min_w if w < 0 else w / max_w
+            r,g,b,_ = plt.cm.RdBu(w_)
+            a = 1 - math.exp(-w**2)
+            draw_line(act_fig, c0, ax_to_fig_coord(act_fig, act_ax[0], (x,0)), (r,g,b,a))
+        act_fig.canvas.draw_idle()
+    elif event.inaxes == act_ax[2]:
+        # get neuron coordinates
+        x = event.xdata
+        x = round(x)
+        # only feed into
+        source = [(ax_to_fig_coord(act_fig, act_ax[1], (z,len(model.layers))), w) for z, w in enumerate(model.out_layer.weight[x,:])]
+        # draw lines
+        all_w = [w.item() for _, w in source]
+        max_w = abs(max(all_w)) + 0.01
+        min_w = abs(min(all_w)) + 0.01
+
+        for c1, w in source:
+            w = w.item()
+            w_ = w / min_w if w < 0 else w / max_w
+            r,g,b,_ = plt.cm.RdBu(w_)
+            a = 1 - math.exp(-w**2)
+            draw_line(act_fig, ax_to_fig_coord(act_fig, act_ax[2], (x,0)), c1, (r,g,b,a))
         act_fig.canvas.draw_idle()
 
 act_fig.canvas.mpl_connect("motion_notify_event", on_hover)
 
 # delete lines on mouseout
 def on_leave(event):
-    if event.inaxes == act_ax[1]:
-        for line in lines:
-            line.remove()
-        act_fig.canvas.draw_idle()
-    lines = []
+    global all_lines
+    for line in all_lines:
+        line.remove()
+    act_fig.canvas.draw_idle()
+    all_lines = []
 
 act_fig.canvas.mpl_connect("axes_leave_event", on_leave)
 
